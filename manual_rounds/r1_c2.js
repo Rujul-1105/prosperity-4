@@ -88,4 +88,4 @@ function EmberMushroom(myPrice, myQty) {
     console.log("Net Profit:", netProfit.toFixed(2));
 }
 
-EmberMushroom(19, 40999);
+EmberMushroom(19, 19999);
