@@ -47,7 +47,7 @@ function DryLandFlax(myPrice, myQty) {
         let traded = Math.min(bidVol, askVol);
 
         // console.log("Price:", p, "Bid Vol:", bidVol, "Ask Vol:", askVol, "Traded:", traded);
-        if (traded > bestVol || (traded === bestVol && p > bestPrice)) {
+        if (traded >= bestVol || (traded === bestVol && p > bestPrice)) {
             bestVol = traded;
             bestPrice = p;
         }
@@ -65,11 +65,17 @@ function DryLandFlax(myPrice, myQty) {
         let ahead = 0;
 
         for (let bp in bids) {
-            if (bp > myPrice) ahead += bids[bp];
+            // console.log("Checking bid price:", bp, "against my price:", myPrice);
+            if (Number(bp) > myPrice) {
+                // console.log("Adding ahead volume:", bids[bp]);
+                ahead += bids[bp];
+                console.log("After adding bid:", ahead);
+            }
         }
         if (bids[myPrice]) {
             ahead += bids[myPrice];
         } // you're last
+        console.log("After some if statement:", ahead);
 
         fill = supply - ahead;
         console.log(fill, supply, ahead);

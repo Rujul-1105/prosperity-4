@@ -24,6 +24,7 @@ function EmberMushroom(myPrice, myQty) {
     let buyback = 20;
     let fee = 0.1;
 
+    // order book after adding my bid
     let newBids = {};
     for (let p in bids) newBids[p] = bids[p];
     newBids[myPrice] = (newBids[myPrice] || 0) + myQty;
@@ -32,6 +33,7 @@ function EmberMushroom(myPrice, myQty) {
     for (let p in newBids) prices.push(Number(p));
     for (let p in asks) prices.push(Number(p));
 
+    // unique prices sorted in ascending order from both sides
     prices = [...new Set(prices)].sort(function (a, b) {
         return a - b;
     });
@@ -39,6 +41,7 @@ function EmberMushroom(myPrice, myQty) {
     let clearingPrice = 0;
     let bestVolume = -1;
 
+    // decide clearing price by iterating through all unique prices and calculating traded volume at each price
     for (let i = 0; i < prices.length; i++) {
         let p = prices[i];
 
@@ -69,6 +72,7 @@ function EmberMushroom(myPrice, myQty) {
     for (let bp in bids) {
         if (Number(bp) > myPrice) ahead += bids[bp];
     }
+
     if (bids[myPrice]) ahead += bids[myPrice];
 
     let fill = 0;
@@ -84,4 +88,4 @@ function EmberMushroom(myPrice, myQty) {
     console.log("Net Profit:", netProfit.toFixed(2));
 }
 
-EmberMushroom(20, 24000);
+EmberMushroom(19, 40999);
