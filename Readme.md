@@ -1,3 +1,4 @@
+docker build -t rust-backtester .
 docker run --rm rust-backtester /app/target/release/rust_backtester --help
 chmod +x run.sh
 
