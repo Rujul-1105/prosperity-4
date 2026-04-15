@@ -13,5 +13,5 @@ rust-backtester \
 /app/target/release/rust_backtester \
 --trader traders/$TRADER \
 --dataset datasets/$ROUND \
---day $DAY \
+--day=$DAY \
 --output-root outputs

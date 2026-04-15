@@ -1,60 +1,108 @@
-from datamodel import Order, OrderDepth, TradingState
-from typing import Dict, List
-
+from datamodel import Order
+import statistics
 
 class Trader:
-    LIMITS = {
-        "EMERALDS": 80,
-        "TOMATOES": 80,
-        "INTARIAN_PEPPER_ROOT": 80,
-        "ASH_COATED_OSMIUM": 80,
-    }
-    QUOTE_SIZE = 5
 
-    def run(self, state: TradingState):
-        orders_by_product: Dict[str, List[Order]] = {}
+    def __init__(self):
+        self.price_history = []
 
-        for product, order_depth in state.order_depths.items():
-            if product not in self.LIMITS:
-                orders_by_product[product] = []
-                continue
-            position = int(state.position.get(product, 0))
-            orders_by_product[product] = self.quote_both_sides(
-                product,
-                order_depth,
-                position,
-            )
+        # === PARAMETERS ===
+        self.WINDOW = 50
+        self.ENTRY_Z = 2
+        self.EXIT_Z = 0.25
+        self.POSITION_LIMIT = 80
+        self.BASE_QTY = 4
+        self.SPREAD_THRESHOLD = 18
 
-        return orders_by_product, 0, ""
+    def run(self, state):
 
-    def quote_both_sides(
-        self,
-        product: str,
-        order_depth: OrderDepth,
-        position: int,
-    ) -> List[Order]:
+        result = {}
+
+        for product in state.order_depths:
+            result[product] = []
+
+        product = "ASH_COATED_OSMIUM"
+
+        if product not in state.order_depths:
+            return result, 0, ""
+
+        order_depth = state.order_depths[product]
+
         if not order_depth.buy_orders or not order_depth.sell_orders:
-            return []
+            return result, 0, ""
 
         best_bid = max(order_depth.buy_orders)
         best_ask = min(order_depth.sell_orders)
-        if best_bid >= best_ask:
-            return []
 
-        if best_ask - best_bid > 1:
-            bid_price = best_bid + 1
-            ask_price = best_ask - 1
-        else:
-            bid_price = best_bid
-            ask_price = best_ask
+        mid_price = (best_bid + best_ask) / 2
+        spread = best_ask - best_bid
 
-        limit = self.LIMITS[product]
-        buy_size = min(self.QUOTE_SIZE, max(0, limit - position))
-        sell_size = min(self.QUOTE_SIZE, max(0, limit + position))
+        # === PRICE HISTORY ===
+        self.price_history.append(mid_price)
+        if len(self.price_history) > self.WINDOW:
+            self.price_history.pop(0)
 
-        orders: List[Order] = []
-        if buy_size > 0:
-            orders.append(Order(product, bid_price, buy_size))
-        if sell_size > 0:
-            orders.append(Order(product, ask_price, -sell_size))
-        return orders
+        if len(self.price_history) < 10:
+            return result, 0, ""
+
+        mean_price = statistics.mean(self.price_history)
+        sigma = statistics.stdev(self.price_history)
+
+        if sigma == 0:
+            return result, 0, ""
+
+        z = (mid_price - mean_price) / sigma
+        position = state.position.get(product, 0)
+
+        orders = []
+
+        # === SPREAD FILTER ===
+        if spread > self.SPREAD_THRESHOLD:
+            return result, 0, ""
+
+        # =========================
+        # 🔴 1. AGGRESSIVE TRADING
+        # =========================
+        if z > self.ENTRY_Z:
+            if position > -self.POSITION_LIMIT:
+                volume = min(self.BASE_QTY, self.POSITION_LIMIT + position)
+                orders.append(Order(product, best_bid, -volume))
+
+        elif z < -self.ENTRY_Z:
+            if position < self.POSITION_LIMIT:
+                volume = min(self.BASE_QTY, self.POSITION_LIMIT - position)
+                orders.append(Order(product, best_ask, volume))
+
+        # =========================
+        # 🟢 2. MARKET MAKING
+        # =========================
+        elif abs(z) < 1.0:
+            # place passive quotes inside spread
+
+            buy_price = best_bid + 3
+            sell_price = best_ask - 3
+
+            # inventory skew (important)
+            skew = position * 0.2
+
+            buy_price = int(buy_price - skew)
+            sell_price = int(sell_price - skew)
+
+            if position < self.POSITION_LIMIT:
+                orders.append(Order(product, buy_price, self.BASE_QTY))
+
+            if position > -self.POSITION_LIMIT:
+                orders.append(Order(product, sell_price, -self.BASE_QTY))
+
+        # =========================
+        # 🟡 3. EXIT
+        # =========================
+        elif abs(z) < self.EXIT_Z:
+            if position > 0:
+                orders.append(Order(product, best_bid, -position))
+            elif position < 0:
+                orders.append(Order(product, best_ask, -position))
+
+        result[product] = orders
+
+        return result, 0, ""
