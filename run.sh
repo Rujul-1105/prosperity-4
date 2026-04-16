@@ -4,7 +4,7 @@ TRADER=$1
 ROUND=$2
 DAY=$3
 
-cp round_1/$TRADER prosperity_rust_backtester/traders/$TRADER
+cp round_1/$TRADER /home/rujul/projects/testing/prosperity_rust_backtester/traders/$TRADER
 sleep 1
 
 docker run --rm \
