@@ -1,0 +1,64 @@
+ ========================
+Here's every graph you need, organized by product and purpose:
+
+---
+
+## VELVETFRUIT_EXTRACT (The Underlying — Most Critical)
+
+1. **Mid-price over time** — `(best_bid + best_ask) / 2` vs timestamp, all 3 days overlaid separately. Looking for: drift, regime changes, mean reversion behavior.
+
+2. **Log returns distribution** — histogram of `log(S_t / S_{t-1})` across all timestamps. Looking for: normality, fat tails, and to read off σ directly.
+
+3. **Rolling realized volatility** — rolling std of log returns (window ~50 and ~200 ticks) vs timestamp. Looking for: is vol stable or time-varying?
+
+4. **Autocorrelation of mid-price returns** — ACF plot up to ~50 lags. Looking for: mean reversion signal (negative autocorrelation at lag 1) or momentum (positive).
+
+5. **Bid-ask spread over time** — `best_ask - best_bid` vs timestamp. Looking for: spread stability, market maker behavior.
+
+6. **Order book depth** — volume at best bid and best ask vs timestamp. Looking for: liquidity patterns.
+
+---
+
+## VELVETFRUIT_EXTRACT_VOUCHERS (Options — The Alpha)
+
+7. **Mid-price of all 10 vouchers on the same plot** vs timestamp (day by day). Looking for: which strikes are actively quoted, price trajectories.
+
+8. **Implied Volatility (IV) for each voucher** vs timestamp — back-solve BS for σ given market mid-price, S, K, and TTE. Plot all 10 IVs on the same chart. Looking for: which vouchers are consistently cheap or expensive, IV stability.
+
+9. **IV Smile** — IV (y-axis) vs Strike price (x-axis), one curve per day (3 curves total). This is the single most important graph. Looking for: shape of the smile, whether it's flat, skewed left/right, and which strikes deviate.
+
+10. **IV spread from ATM IV** — for each voucher: `IV_voucher - IV_ATM` vs timestamp. Looking for: mean-reverting deviations that you can trade.
+
+11. **BS theoretical price vs market mid-price** for each voucher — two lines on the same plot, per voucher. Use the ATM IV as your vol input. Looking for: systematic over/underpricing.
+
+12. **Mispricing = BS price − market mid** vs timestamp, for each voucher. Looking for: persistent sign (always cheap or always expensive) vs noisy deviations.
+
+13. **Delta of each voucher** (computed from BS) vs timestamp. Looking for: how much VEV hedge you'd need if you max out position limits on each voucher.
+
+14. **Vega of each voucher** vs timestamp. Looking for: which strikes give you the most vol exposure per unit of position.
+
+---
+
+## HYDROGEL_PACK
+
+15. **Mid-price over time** — all 3 days. Looking for: stable fair value (flat line → market make) vs mean reversion vs trend.
+
+16. **Mid-price distribution** — histogram. Looking for: tight unimodal distribution → stable fair value to market make around.
+
+17. **ACF of mid-price returns** — same as VEV. Looking for: mean reversion signal.
+
+18. **Bid-ask spread over time**. Looking for: how wide the natural spread is — tells you what spread you can quote profitably.
+
+---
+
+## Cross-Product
+
+19. **VEV mid-price vs HYDROGEL_PACK mid-price** — scatter plot and correlation. Looking for: any correlation that could be exploited as a pairs trade.
+
+20. **VEV mid-price vs each voucher mid-price** — scatter plot per voucher. Looking for: how tightly the market prices options relative to the underlying (sanity check on your BS model).
+
+---
+
+## Priority Order
+
+Start with **#9 (IV smile)** and **#1 (VEV mid-price)** — those two will tell you 80% of what you need. Then **#8** to verify vol stability, then **#15** for HYDROGEL_PACK character. Everything else is refinement.
