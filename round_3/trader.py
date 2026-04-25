@@ -1,152 +1,198 @@
 from datamodel import OrderDepth, TradingState, Order
-from typing import List
-import numpy as np
+from typing import List, Dict
 from collections import deque
+import numpy as np
+
 
 class Trader:
-
     def __init__(self):
         self.product = "HYDROGEL_PACK"
-
         self.limit = 180
 
-        # === HISTORY ===
-        self.mid_history = deque(maxlen=200)
-        self.dev_history = deque(maxlen=500)
-        self.price_change_history = deque(maxlen=50)
+        # --- history ---
+        self.mid_history = deque(maxlen=400)
+        self.imbalance_history = deque(maxlen=500)
+        self.edge_history = deque(maxlen=500)
 
-        # === MM ===
-        self.mm_base_size = 20
-        self.mm_reduced_size = 10
+        # --- state ---
+        self.ema_fast = None
+        self.ema_slow = None
 
-        # === Z PARAMETERS (SAFE) ===
-        self.z_entry = 3.0
-        self.z_add = 4.0
-        self.z_exit_partial = 1.0
-        self.z_exit_full = 0.0
+        # --- parameters ---
+        self.anchor_price = 10000.0
 
-    # ========================= HYDROGEL =========================
+        self.ema_fast_alpha = 0.24
+        self.ema_slow_alpha = 0.06
+
+        # thresholds
+        self.entry_z = 2.2
+        self.extreme_z = 3.0
+        self.exit_z = 0.1
+
+        self.directional_size = 10
+        self.directional_size_extreme = 18
+
+        self.inventory_soft = 80
+        self.inventory_hard = 140
+
+    # -------- helpers --------
+    @staticmethod
+    def _best_prices(order_depth: OrderDepth):
+        return max(order_depth.buy_orders), min(order_depth.sell_orders)
+
+    @staticmethod
+    def _book_imbalance(order_depth: OrderDepth):
+        bid = sum(order_depth.buy_orders.values())
+        ask = sum(abs(v) for v in order_depth.sell_orders.values())
+        if bid + ask == 0:
+            return 0
+        return (bid - ask) / (bid + ask)
+
+    @staticmethod
+    def _microprice(bid, ask, bid_vol, ask_vol):
+        if bid_vol + ask_vol == 0:
+            return (bid + ask) / 2
+        return (bid * ask_vol + ask * bid_vol) / (bid_vol + ask_vol)
+
+    def _zscore(self, val, hist):
+        if len(hist) < 20:
+            return 0
+        arr = np.array(hist)
+        return (val - np.mean(arr)) / (np.std(arr) + 1e-6)
+
+    def _update_ema(self, mid):
+        if self.ema_fast is None:
+            self.ema_fast = mid
+            self.ema_slow = mid
+        else:
+            self.ema_fast = self.ema_fast_alpha * mid + (1 - self.ema_fast_alpha) * self.ema_fast
+            self.ema_slow = self.ema_slow_alpha * mid + (1 - self.ema_slow_alpha) * self.ema_slow
+
+    def _fair(self, mid):
+        return (
+            0.5 * self.anchor_price +
+            0.25 * self.ema_fast +
+            0.25 * self.ema_slow
+        )
+
+    def _trend(self):
+        if len(self.mid_history) < 80:
+            return "NEUTRAL"
+
+        short = np.mean(list(self.mid_history)[-20:])
+        long = np.mean(list(self.mid_history)[-80:])
+
+        if short - long > 3:
+            return "UP"
+        if short - long < -3:
+            return "DOWN"
+        return "NEUTRAL"
+
+    # -------- main --------
     def run_hydrogel(self, state: TradingState):
-        product = self.product
-        orders: List[Order] = []
 
-        if product not in state.order_depths:
+        orders = []
+
+        if self.product not in state.order_depths:
             return orders
 
-        order_depth = state.order_depths[product]
+        od = state.order_depths[self.product]
 
-        if not order_depth.buy_orders or not order_depth.sell_orders:
+        if not od.buy_orders or not od.sell_orders:
             return orders
 
-        best_bid = max(order_depth.buy_orders)
-        best_ask = min(order_depth.sell_orders)
+        bid, ask = self._best_prices(od)
+        mid = (bid + ask) / 2
+        position = state.position.get(self.product, 0)
 
-        mid = (best_bid + best_ask) / 2
-        position = state.position.get(product, 0)
+        bid_vol = abs(od.buy_orders[bid])
+        ask_vol = abs(od.sell_orders[ask])
 
-        # HISTORY
-        if len(self.mid_history) > 0:
-            self.price_change_history.append(mid - self.mid_history[-1])
+        imbalance = self._book_imbalance(od)
+        micro = self._microprice(bid, ask, bid_vol, ask_vol)
 
+        # --- update ---
         self.mid_history.append(mid)
+        self._update_ema(mid)
 
-        if len(self.mid_history) < 100:
-            return orders
+        fair = self._fair(mid)
 
-        # FAIR VALUE
-        ma50 = np.mean(list(self.mid_history)[-50:])
-        ma200 = np.mean(self.mid_history)
-        fair = 0.7 * ma50 + 0.3 * ma200
+        # --- EDGE (microprice based) ---
+        edge = micro - fair
+        self.edge_history.append(edge)
 
-        # TREND
-        short_ma = np.mean(list(self.mid_history)[-20:])
-        long_ma = np.mean(list(self.mid_history)[-100:])
-        trend = short_ma - long_ma
-        slope = np.mean(np.diff(list(self.mid_history)[-20:]))
+        z = self._zscore(edge, self.edge_history)
+        flow_z = self._zscore(imbalance, self.imbalance_history)
+        self.imbalance_history.append(imbalance)
 
-        strong_trend = abs(trend) > 5 or abs(slope) > 1.5
+        # --- SIMPLIFIED TIMING (very light filter) ---
+        z_prev = z
+        if len(self.edge_history) > 2:
+            prev_edge = self.edge_history[-2]
+            z_prev = self._zscore(prev_edge, self.edge_history)
 
-        # Z SCORE
-        deviation = mid - fair
-        self.dev_history.append(deviation)
-
-        sigma = np.std(self.dev_history) if len(self.dev_history) > 50 else 10
-        z = deviation / sigma if sigma > 0 else 0
-
-        momentum = np.mean(self.price_change_history) if len(self.price_change_history) > 10 else 0
+        trend = self._trend()
 
         long_cap = self.limit - position
         short_cap = self.limit + position
 
-        # INVENTORY FLUSH
-        if strong_trend:
-            if trend < 0 and position > 0:
-                orders.append(Order(product, best_bid, -min(position, 50)))
-            elif trend > 0 and position < 0:
-                orders.append(Order(product, best_ask, min(-position, 50)))
-
-        # EXIT
-        if position > 0:
-            if z > -1:
-                orders.append(Order(product, best_bid, -min(position // 2, 20)))
-        elif position < 0:
-            if z < 1:
-                orders.append(Order(product, best_ask, min((-position) // 2, 20)))
-
-        # ALLOW DIRECTIONAL
-        allow_directional = True
-        if strong_trend and abs(z) < 3.5:
-            allow_directional = False
-
-        # MEAN REVERSION
-        if allow_directional and abs(position) < 160:
-
-            if z > 3.0 and momentum < 0.5:
-                size = min(25, short_cap)
-                if size > 0:
-                    orders.append(Order(product, best_bid, -size))
-
-            elif z < -3.0 and momentum > -0.5:
-                size = min(25, long_cap)
-                if size > 0:
-                    orders.append(Order(product, best_ask, size))
-
-        # TREND FOLLOWING
-        if strong_trend:
-
-            if trend > 0 and z < -2:
-                size = min(20, long_cap)
-                if size > 0:
-                    orders.append(Order(product, best_ask, size))
-
-            elif trend < 0 and z > 2:
-                size = min(20, short_cap)
-                if size > 0:
-                    orders.append(Order(product, best_bid, -size))
-
-        # MM
-        spread = int(max(4, min(8, 0.5 * sigma)))
-        size = 20 if abs(position) <= 100 else 10
-
-        bid_offset = -spread
-        ask_offset = +spread
-
-        if strong_trend:
-            if trend > 0:
-                ask_offset += 2
+        # --- HARD RISK ---
+        if abs(position) > self.inventory_hard:
+            if position > 0:
+                orders.append(Order(self.product, bid, -position))
             else:
-                bid_offset -= 2
+                orders.append(Order(self.product, ask, -position))
+            return orders
 
-        if long_cap > 0:
-            orders.append(Order(product, int(fair + bid_offset), min(size, long_cap)))
+        # --- FLOW FILTER ---
+        if abs(flow_z) > 1.5:
+            return orders
 
-        if short_cap > 0:
-            orders.append(Order(product, int(fair + ask_offset), -min(size, short_cap)))
+        # --- TREND LOGIC ---
+        if trend == "DOWN":
+
+            if position > 0:
+                orders.append(Order(self.product, bid, -min(position, 20)))
+
+            # 🔥 TIMING FILTER APPLIED
+            if z > self.entry_z:
+                size = min(self.directional_size, short_cap)
+                orders.append(Order(self.product, bid, -size))
+
+            return orders
+
+        if trend == "UP":
+
+            if position < 0:
+                orders.append(Order(self.product, ask, min(-position, 20)))
+
+            # 🔥 TIMING FILTER APPLIED
+            if z < -self.entry_z:
+                size = min(self.directional_size, long_cap)
+                orders.append(Order(self.product, ask, size))
+
+            return orders
+
+        # --- NEUTRAL MEAN REVERSION ---
+        if z < -self.entry_z:
+            size = min(self.directional_size, long_cap)
+            orders.append(Order(self.product, ask, size))
+
+        elif z > self.entry_z:
+            size = min(self.directional_size, short_cap)
+            orders.append(Order(self.product, bid, -size))
+
+        # --- FAST EXIT ---
+        if position > 0 and z > -self.exit_z:
+            orders.append(Order(self.product, bid, -min(position, 15)))
+
+        if position < 0 and z < self.exit_z:
+            orders.append(Order(self.product, ask, min(-position, 15)))
 
         return orders
-    # ========================= RUN =========================
+
     def run(self, state: TradingState):
-        result = {}
+        result: Dict[str, List[Order]] = {}
 
         orders = self.run_hydrogel(state)
         if orders:
