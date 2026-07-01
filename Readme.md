@@ -18,3 +18,5 @@ rust-backtester \
 
 ./run.sh $PATH $DATASET $DAY
 ./run.sh trader.py round1 0
+
+___________________________________________________________________________
